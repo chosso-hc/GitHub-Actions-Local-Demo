@@ -31,7 +31,7 @@ jobs:
         run: mvn package -DskipTests
 
       - name: Upload JAR
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v5
         with:
           name: app-jar
           # FIX 3: Korrekter Pfad zum JAR
