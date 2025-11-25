@@ -1,0 +1,139 @@
+name: 04 - Debugging Challenge (FIXED)
+
+# Dies ist die korrigierte Version des Workflows.
+# Vergleiche diese Datei mit 04-debugging-challenge.yml um die Fehler zu verstehen.
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # Job 1: Build (korrigiert)
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+          # FIX 1: Korrekter Pfad zur pom.xml
+          cache-dependency-path: backend/pom.xml
+
+      - name: Build Application
+        # FIX 2: Korrektes working-directory
+        working-directory: ./backend
+        run: mvn package -DskipTests
+
+      - name: Upload JAR
+        uses: actions/upload-artifact@v3
+        with:
+          name: app-jar
+          # FIX 3: Korrekter Pfad zum JAR
+          path: backend/target/*.jar
+
+  # Job 2: Docker Build (korrigiert)
+  docker:
+    # FIX 4: Job-Abhängigkeit hinzugefügt
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download JAR
+        uses: actions/download-artifact@v3
+        with:
+          name: app-jar
+          path: ./backend/target
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          # FIX 5: Korrekter Dockerfile-Pfad
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: demo-app:fixed
+
+  # Job 3: Test (korrigiert)
+  test:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download JAR
+        uses: actions/download-artifact@v3
+        with:
+          name: app-jar
+          path: ./backend/target
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: demo-app:fixed
+
+      - name: Start Container
+        run: |
+          docker run -d \
+            --name test-container \
+            -p 8080:8080 \
+            demo-app:fixed
+
+      - name: Wait for App
+        run: |
+          max_attempts=10
+          attempt=0
+          
+          while [ $attempt -lt $max_attempts ]; do
+            # FIX 7: Korrekter Port in der URL
+            if curl -f http://localhost:8080/ 2>/dev/null; then
+              echo "App is ready!"
+              exit 0
+            fi
+            attempt=$((attempt + 1))
+            sleep 2
+          done
+          
+          echo "App failed to start"
+          docker logs test-container
+          exit 1
+
+      - name: Test Endpoint
+        run: |
+          # FIX 8: Korrekter Endpoint
+          response=$(curl -s http://localhost:8080/api/hello)
+          echo "Response: $response"
+          
+          if echo "$response" | grep -q "Hello from API"; then
+            echo "Test passed"
+          else
+            echo "Test failed"
+            docker logs test-container
+            exit 1
+          fi
+
+      - name: Cleanup
+        # FIX 9: Cleanup läuft auch bei Fehlern
+        if: always()
+        run: |
+          docker stop test-container
+          docker rm test-container

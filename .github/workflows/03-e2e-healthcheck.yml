@@ -1,0 +1,186 @@
+name: 03 - E2E Health Check
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # Job 1: Unit Tests ausführen
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Run Unit Tests
+        working-directory: ./backend
+        run: mvn test
+
+  # Job 2: Docker Image bauen mit Caching
+  docker-build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Build JAR
+        working-directory: ./backend
+        run: mvn package -DskipTests
+
+      # Docker Buildx für Layer Caching
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Docker Layer Cache
+      - name: Cache Docker Layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: docker-buildx-${{ hashFiles('backend/Dockerfile', 'backend/pom.xml') }}
+          restore-keys: |
+            docker-buildx-
+
+      # Docker Image bauen mit Cache
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: demo-app:e2e
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+
+      # Cache Move (verhindert unbegrenztes Wachstum)
+      - name: Move Cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Verify Image
+        run: docker images demo-app:e2e
+
+  # Job 3: Health Check und API Tests
+  test-health-and-api:
+    needs: docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      # Container starten
+      - name: Start Application Container
+        run: |
+          echo "=== Container starten ==="
+          docker run -d \
+            --name demo-app-container \
+            -p 8080:8080 \
+            demo-app:e2e
+          
+          echo "Container gestartet"
+          docker ps
+
+      # Warten bis Anwendung bereit ist
+      - name: Wait for Application to be Ready
+        run: |
+          echo "=== Warte auf Anwendungsstart ==="
+          max_attempts=30
+          attempt=0
+          
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -f http://localhost:8080/actuator/health 2>/dev/null; then
+              echo "Anwendung ist bereit!"
+              break
+            fi
+            
+            attempt=$((attempt + 1))
+            echo "Versuch $attempt/$max_attempts - Anwendung noch nicht bereit..."
+            sleep 2
+          done
+          
+          if [ $attempt -eq $max_attempts ]; then
+            echo "Anwendung timed out!"
+            docker logs demo-app-container
+            exit 1
+          fi
+
+      # Health Check durchführen
+      - name: Run Health Check
+        run: |
+          echo "=== Health Check ==="
+          response=$(curl -s http://localhost:8080/actuator/health)
+          echo "Response: $response"
+          
+          # Prüfen ob Status "UP" ist
+          if echo "$response" | grep -q '"status":"UP"'; then
+            echo "ealth Check erfolgreich - Status: UP"
+          else
+            echo "Health Check fehlgeschlagen"
+            docker logs demo-app-container
+            exit 1
+          fi
+
+      # API Endpoints testen
+      - name: Test API Endpoints
+        run: |
+          echo "=== API Tests ==="
+          
+          # Root Endpoint testen
+          echo "Test: GET /"
+          response=$(curl -s http://localhost:8080/)
+          echo "Response: $response"
+          
+          if echo "$response" | grep -q "Hello from GitHub Actions"; then
+            echo "Root Endpoint funktioniert!"
+          else
+            echo "Root Endpoint fehlgeschlagen!"
+            exit 1
+          fi
+          
+          echo ""
+          
+          # API Hello Endpoint testen
+          echo "Test: GET /api/hello"
+          response=$(curl -s http://localhost:8080/api/hello)
+          echo "Response: $response"
+          
+          if echo "$response" | grep -q "Hello from API"; then
+            echo "API Endpoint funktioniert!"
+          else
+            echo "API Endpoint fehlgeschlagen!"
+            exit 1
+          fi
+
+      # Container Logs anzeigen
+      - name: Show Container Logs
+        if: always()
+        run: |
+          echo "=== Container Logs ==="
+          docker logs demo-app-container
+
+      # Container stoppen
+      - name: Stop Container
+        if: always()
+        run: |
+          echo "=== Container stoppen ==="
+          docker stop demo-app-container
+          docker rm demo-app-container

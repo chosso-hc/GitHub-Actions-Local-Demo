@@ -1,0 +1,27 @@
+# Standardkonfiguration für act
+# in <repo> Hauptverzeichnis kopieren oder ~/.actrc bzw. ~/.config/act/actrc für globale Anwendung
+
+# Großes Runner Image verwenden (enthält mehr Tools, dauert länger beim ersten Pull: ~17,5 GB Download; ~50GB auf Disk)
+# -P ubuntu-latest=catthehacker/ubuntu:act-latest
+# act image mit vorinsstalliertem maven
+-P ubuntu-latest=quay.io/jamezp/act-maven
+
+# Blockiert erneuten Download vom Runner Image (sinnvoll bei großen Images)
+# --pull=false
+
+# Verwende Docker Socket für Docker-in-Docker Szenarien (Docker Container in Workflows)
+--container-daemon-socket /var/run/docker.sock
+
+# --container-architecture linux/amd64
+
+# Secrets Datei standardmäßig laden
+--secret-file .secrets
+
+# Variablen Datei standardmäßig laden
+--var-file .vars
+
+# Container nach dem Lauf löschen, um Disk-Space zu sparen
+--rm
+
+# Optional auskommentieren für Apple Silicon (M1/M2/M3/M4)  
+# --container-architecture linux/amd64

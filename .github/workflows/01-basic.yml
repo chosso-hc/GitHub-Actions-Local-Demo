@@ -1,0 +1,70 @@
+name: 01 - Basic Build & Test
+
+# Trigger: Bei jedem Push und manuell ausführbar
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  # Job 1: Unit Tests ausführen
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      
+      # Checks-out des repository unter $GITHUB_WORKSPACE, sodass der Workflow darauf zugreifen kann
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      
+      # Setzt Java 21 JDK für den Workflow auf
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+          # Pfad zur pom.xml angeben
+          cache-dependency-path: backend/pom.xml
+
+      # Cached die Maven packages um den Buildprozess zu beschleunigen
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Run Unit Tests
+        working-directory: ./backend
+        run: mvn test
+
+  # Job 2: Anwendung bauen (läuft nur, wenn 'test' erfolgreich war)
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+          cache-dependency-path: backend/pom.xml
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Build JAR (Skip Tests)
+        working-directory: ./backend
+        # 'package' baut das JAR, -DskipTests ignoriert Tests
+        run: mvn package -DskipTests
